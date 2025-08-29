@@ -1,34 +1,80 @@
-import os, sys, time
-import cv2
+import os, sys, time, cv2
 import mediapipe as mp
 import pyautogui as pg
+import numpy as np
 from eyetrax import GazeEstimator, run_9_point_calibration
+from mediapipe.framework.formats import landmark_pb2
+from mediapipe import solutions as mp_solutions
+
 
 mp_hands = mp.solutions.hands
 
 class landmarker_and_result():
-    def __init__(self):
-        self.result = mp.tasks.vision.HandLandmarkerResult
-        self.landmarker = mp.tasks.vision.HandLandmarker
-        self.createLandmarker()
+   def __init__(self):
+      self.result = mp.tasks.vision.HandLandmarkerResult
+      self.landmarker = mp.tasks.vision.HandLandmarker
+      self.createLandmarker()
+   
+   def createLandmarker(self):
+      # callback function
+      def update_result(result: mp.tasks.vision.HandLandmarkerResult, output_image: mp.Image, timestamp_ms: int):
+         self.result = result
 
-def createLandmarker(self):
-  # callback function
-    def update_result(result: mp.tasks.vision.HandLandmarkerResult, output_image: mp.Image, timestamp_ms: int):
-        self.result = result
+      # HandLandmarkerOptions (details here: https://developers.google.com/mediapipe/solutions/vision/hand_landmarker/python#live-stream)
+      options = mp.tasks.vision.HandLandmarkerOptions( 
+         base_options = mp.tasks.BaseOptions(model_asset_path="Hand Landmarker Task - Google AI Guide.task"), # path to model
+         running_mode = mp.tasks.vision.RunningMode.LIVE_STREAM, # running on a live stream
+         num_hands = 2, # track both hands
+         min_hand_detection_confidence = 0.3, # lower than value to get predictions more often
+         min_hand_presence_confidence = 0.3, # lower than value to get predictions more often
+         min_tracking_confidence = 0.3, # lower than value to get predictions more often
+         result_callback=update_result)
+      
+      # initialize landmarker
+      self.landmarker = self.landmarker.create_from_options(options)
+   
+   def detect_async(self, frame):
+      # convert np frame to mp image
+      mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
+      # detect landmarks
+      self.landmarker.detect_async(image = mp_image, timestamp_ms = int(time.time() * 1000))
 
-    # HandLandmarkerOptions (details here: https://developers.google.com/mediapipe/solutions/vision/hand_landmarker/python#live-stream)
-    options = mp.tasks.vision.HandLandmarkerOptions( 
-        base_options = mp.tasks.BaseOptions(model_asset_path="hand_landmarker.task"), # path to model
-        running_mode = mp.tasks.vision.RunningMode.LIVE_STREAM, # running on a live stream
-        num_hands = 2, # track both hands
-        min_hand_detection_confidence = 0.3, # lower than value to get predictions more often
-        min_hand_presence_confidence = 0.3, # lower than value to get predictions more often
-        min_tracking_confidence = 0.3, # lower than value to get predictions more often
-        result_callback=update_result)
-    
-    # initialize landmarker
-    self.landmarker = self.landmarker.create_from_options(options)
+   def close(self):
+      # close landmarker
+      self.landmarker.close()
+
+def draw_landmarks_on_image(rgb_image, detection_result: mp.tasks.vision.HandLandmarkerResult):
+    try:
+        if detection_result is None or not detection_result.hand_landmarks:
+            return rgb_image
+        else:
+            hand_landmarks_list = detection_result.hand_landmarks
+            annotated_image = np.copy(rgb_image)
+
+            for idx in range(len(hand_landmarks_list)):
+                hand_landmarks = hand_landmarks_list[idx]
+
+                # build landmark proto
+                hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+                hand_landmarks_proto.landmark.extend([
+                    landmark_pb2.NormalizedLandmark(
+                        x=landmark.x, y=landmark.y, z=landmark.z
+                    ) for landmark in hand_landmarks
+                ])
+
+                # draw landmarks + connections
+                mp_solutions.drawing_utils.draw_landmarks(
+                    annotated_image,
+                    hand_landmarks_proto,
+                    mp_solutions.hands.HAND_CONNECTIONS,
+                    mp_solutions.drawing_styles.get_default_hand_landmarks_style(),
+                    mp_solutions.drawing_styles.get_default_hand_connections_style()
+                )
+            return annotated_image
+    except Exception as e:
+        print("Drawing error:", e)
+        return rgb_image
+
 
 
 
@@ -45,6 +91,9 @@ def hand_track(display=False, camera=1):
     face_mesh = mp.solutions.face_mesh.FaceMesh(refine_landmarks=True)
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    #intializing the landmarker_and_result class
+    hand_landmarker = landmarker_and_result()
 
 
     if not cap.isOpened():
@@ -63,11 +112,17 @@ def hand_track(display=False, camera=1):
             break
         
         #TODO: Hand Tracking
-        res = hands.process(rgb_frame)
+        hand_landmarker.detect_async(rgb_frame)
+        frame = draw_landmarks_on_image(frame,hand_landmarker.result)
 
-        if res.multi_hand_landmarks:
-            x = res.multi_hand_landmarks[0]
-            print(res.multi_hand_landmarks[0])
+        # print(hand_landmarker.result)
+
+
+        # res = hands.process(rgb_frame)
+
+        # if res.multi_hand_landmarks:
+        #     x = res.multi_hand_landmarks[0]
+        #     print(type(res.multi_hand_landmarks[0]))
 
         #TODO: Eye Tracking
         # output = face_mesh.process(rgb_frame)
@@ -98,13 +153,14 @@ def hand_track(display=False, camera=1):
             cv2.waitKey(1)
 
     cap.release()
+    hand_landmarker.close()
     cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
     cam = 1
-    estimator = GazeEstimator()
-    estimator.load_model("gaze_model.pkl")
+    # estimator = GazeEstimator()
+    # estimator.load_model("gaze_model.pkl")
     if not cv2.VideoCapture(cam).isOpened():
         cam = 0
 
