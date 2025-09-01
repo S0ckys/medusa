@@ -3,6 +3,8 @@
 # from mediapipe.framework.formats import landmark_pb2
 import cv2
 import copy, sys, os
+import datetime
+
 
 import mediapipe as mp
 from mediapipe.tasks import python
@@ -17,6 +19,9 @@ from utils import CvFpsCalc
 from model import KeyPointClassifier
 from model import PointHistoryClassifier
 
+import pyautogui
+
+REACTION_TIME = 0.1 #Toggle for faster/slower action speed timing
 mp_hands = mp.solutions.hands
 
 base_options = python.BaseOptions(model_asset_path='gesture_recognizer.task')
@@ -24,6 +29,8 @@ options = vision.GestureRecognizerOptions(base_options=base_options)
 recognizer = vision.GestureRecognizer.create_from_options(options)
 
 def hand_track(display=False, camera=0):
+
+    hand_log = (0, datetime.datetime.now())
 
     #setup the model
     cap = cv2.VideoCapture(camera) 
@@ -115,27 +122,18 @@ def hand_track(display=False, camera=0):
 
                 # Hand sign classification
                 hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
-                print(hand_sign_id)
 
-                #TODO: !!!!!!!!!!!!!! This is how we're going to lock the FUCK into this
-                if hand_sign_id != 0:  # Point gesture
-                    point_history.append(landmark_list[8])
-                else:
-                    point_history.append([0, 0])
+                #Logs the sign with the time
+                current_time = datetime.datetime.now()
 
-                # Finger gesture classification
-                finger_gesture_id = 0
-                point_history_len = len(pre_processed_point_history_list)
-                if point_history_len == (history_length * 2):
-                    finger_gesture_id = point_history_classifier(
-                        pre_processed_point_history_list)
-
-                # Calculates the gesture IDs in the latest detection
-                finger_gesture_history.append(finger_gesture_id)
-                most_common_fg_id = Counter(
-                    finger_gesture_history).most_common()
+                prev_hand_log = hand_log
                 
-                print(finger_gesture_history)
+                if prev_hand_log[0] != hand_sign_id:
+                    hand_log = (hand_sign_id, current_time)
+                    print(hand_log)
+                    if current_time - prev_hand_log[1] > datetime.timedelta(seconds=REACTION_TIME):
+                        print("action!")
+                        autogui_handler(prev_hand_log, hand_log)
 
         else:
             point_history.append([0, 0])
@@ -146,6 +144,15 @@ def hand_track(display=False, camera=0):
 
     cap.release()
     cv2.destroyAllWindows()
+
+
+def autogui_handler(prev_hand_log, hand_log):
+    print("CLICKING....")
+    if hand_log[0] == 3:
+        pyautogui.click()
+    
+    elif hand_log[0] == 1:
+        ...
 
 
 if __name__ == "__main__":
